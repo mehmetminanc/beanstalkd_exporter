@@ -31,6 +31,9 @@ type Exporter struct {
 
 	graceDuration time.Duration
 
+	// Tube stat fields to export, map for fast checks
+	fields map[string]bool
+
 	// scrape metrics
 	scrapeCountMetric           *prometheus.CounterVec
 	scrapeConnectionErrorMetric prometheus.Counter
@@ -40,7 +43,7 @@ type Exporter struct {
 	cherrs chan error
 }
 
-func NewExporter(address string) *Exporter {
+func NewExporter(address string, fields []string) *Exporter {
 	cherrs := make(chan error)
 	exporter := &Exporter{
 		address: address,
@@ -69,8 +72,11 @@ func NewExporter(address string) *Exporter {
 				Help:      "Scrape time buckets.",
 			},
 		),
-
 		cherrs: cherrs,
+	}
+	exporter.fields = make(map[string]bool)
+	for _, v := range fields {
+		exporter.fields[v] = true
 	}
 
 	go func(e *Exporter) {
@@ -277,8 +283,8 @@ func (e *Exporter) statTube(c *beanstalk.Conn, tubeName string) []prometheus.Col
 	e.scrapeCountMetric.WithLabelValues("success").Inc()
 
 	for key, value := range stats {
-		// ignore these stats
-		if key == "tube-name" || key == "name" {
+		// ignore stats if not in the field list
+		if _, ok := e.fields[key]; !ok {
 			continue
 		}
 

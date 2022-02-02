@@ -2,7 +2,9 @@ package main
 
 import (
 	"flag"
+	"io/ioutil"
 	"net/http"
+	"strings"
 
 	"github.com/howeyc/fsnotify"
 	"github.com/prometheus/client_golang/prometheus"
@@ -11,10 +13,28 @@ import (
 )
 
 var (
+	allFields = []string{
+		"current-jobs-urgent",
+		"current-jobs-ready",
+		"current-jobs-reserved",
+		"current-jobs-delayed",
+		"current-jobs-buried",
+		"total-jobs",
+		"current-using",
+		"current-waiting",
+		"current-watching",
+		"pause",
+		"cmd-delete",
+		"cmd-pause-tube",
+		"pause-time-left",
+	}
+)
+var (
 	address            = flag.String("beanstalkd.address", "localhost:11300", "Beanstalkd server address")
 	connectionTimeout  = flag.Duration("beanstalkd.connection-timeout", 0, "Timeout value for tcp connection to Beanstalkd")
 	logLevel           = flag.String("log.level", "warning", "The log level.")
 	mappingConfig      = flag.String("mapping-config", "", "A file that describes a mapping of tube names.")
+	fieldConfig        = flag.String("field-config", "", "A file that list stats to be collected, if not set all stats are collected.")
 	sleepBetweenStats  = flag.Int("sleep-between-tube-stats", 5000, "The number of milliseconds to sleep between tube stats.")
 	numTubeStatWorkers = flag.Int("num-tube-stat-workers", 1, "The number of concurrent workers to use to fetch tube stats.")
 	listenAddress      = flag.String("web.listen-address", ":8080", "Address to listen on for web interface and telemetry.")
@@ -23,6 +43,7 @@ var (
 
 var (
 	mapper   *tubeMapper
+	fields   []string
 	registry *prometheus.Registry
 )
 
@@ -74,7 +95,18 @@ func main() {
 		}
 		go watchConfig(*mappingConfig, mapper)
 	}
-	exporter := NewExporter(*address)
+
+	fields = allFields
+	if *fieldConfig != "" {
+		fieldsFile, err := ioutil.ReadFile(*fieldConfig)
+		if err != nil {
+			log.Warnf("Error loading fields config, defaulting to all fields: %v\n", err)
+		} else {
+			fields = strings.Split(string(fieldsFile), "\n")
+		}
+	}
+
+	exporter := NewExporter(*address, fields)
 	exporter.SetConnectionTimeout(*connectionTimeout)
 	registry = prometheus.NewRegistry()
 	registry.MustRegister(exporter)
@@ -86,13 +118,17 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`
-			<html>
-              <head><title>Beanstalkd Exporter</title></head>
-              <body>
+			<!DOCTYPE html>
+			<html lang="en">
+			  <head>
+				<meta charset="utf-8">
+				<title>Beanstalkd Exporter</title>
+			  </head>
+			  <body>
                 <h1>Beanstalkd Exporter</h1>
                 <p><a href='` + *metricsPath + `'>Metrics</a></p>
-              </body>
-            </html>
+			  </body>
+			</html>
 		`),
 		)
 	})
